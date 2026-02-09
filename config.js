@@ -7,7 +7,8 @@ const config = {
   MESSAGE_RETENTION_DAYS: Number(process.env.MESSAGE_RETENTION_DAYS || 30),
   RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED === "true",
   RATE_LIMIT_WINDOW_MS: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
-  RATE_LIMIT_MAX: Number(process.env.RATE_LIMIT_MAX || 120)
+  RATE_LIMIT_MAX: Number(process.env.RATE_LIMIT_MAX || 120),
+  DEBUG_LOGS: process.env.DEBUG_LOGS === "true"
 };
 
 export default config;

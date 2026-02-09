@@ -46,6 +46,9 @@ const createAuthMiddleware = ({
     req.user = user;
     next();
   } catch {
+    if (config.DEBUG_LOGS) {
+      console.warn("Auth token verification failed");
+    }
     if (requireAuth) {
       res.status(401).json({ error: "Invalid token." });
       return;

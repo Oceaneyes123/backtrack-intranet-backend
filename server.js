@@ -27,6 +27,17 @@ const app = express();
 app.use(cors({ origin: config.ORIGIN, credentials: false }));
 app.use(express.json({ limit: "64kb" }));
 
+if (config.DEBUG_LOGS) {
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    res.on("finish", () => {
+      const durationMs = Date.now() - startedAt;
+      console.log(`[${res.statusCode}] ${req.method} ${req.originalUrl} (${durationMs}ms)`);
+    });
+    next();
+  });
+}
+
 const rateLimitStore = new Map();
 const rateLimitMiddleware = (req, res, next) => {
   if (!config.RATE_LIMIT_ENABLED) return next();

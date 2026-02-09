@@ -1,4 +1,5 @@
 import { WebSocketServer } from "ws";
+import config from "./config.js";
 
 const attachRealtime = (server, app, deps) => {
   const {
@@ -75,8 +76,15 @@ const attachRealtime = (server, app, deps) => {
 
     addSseSubscriber(roomId, res);
 
+    if (config.DEBUG_LOGS) {
+      console.log(`[sse] connected room=${roomId} user=${user?.id || "unknown"}`);
+    }
+
     req.on("close", () => {
       removeSseSubscriber(roomId, res);
+      if (config.DEBUG_LOGS) {
+        console.log(`[sse] disconnected room=${roomId} user=${user?.id || "unknown"}`);
+      }
     });
   });
 
@@ -134,6 +142,9 @@ const attachRealtime = (server, app, deps) => {
         });
       })
       .catch(() => {
+        if (config.DEBUG_LOGS) {
+          console.warn("[ws] auth failed");
+        }
         socket.destroy();
       });
   });
@@ -157,8 +168,15 @@ const attachRealtime = (server, app, deps) => {
     const roomSubscribers = getSubscriberSet(roomId);
     roomSubscribers.add(ws);
 
+    if (config.DEBUG_LOGS) {
+      console.log(`[ws] connected room=${roomId} user=${user?.id || "unknown"}`);
+    }
+
     ws.on("close", () => {
       roomSubscribers.delete(ws);
+      if (config.DEBUG_LOGS) {
+        console.log(`[ws] disconnected room=${roomId} user=${user?.id || "unknown"}`);
+      }
     });
   });
 

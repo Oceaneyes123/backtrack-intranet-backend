@@ -7,6 +7,7 @@ const resolvedDbPath = path.resolve(config.DATABASE_PATH);
 fs.mkdirSync(path.dirname(resolvedDbPath), { recursive: true });
 const db = new Database(resolvedDbPath);
 db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -26,29 +27,29 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS direct_rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id INTEGER,
-    user_a_id INTEGER,
-    user_b_id INTEGER,
+    room_id INTEGER REFERENCES rooms(id),
+    user_a_id INTEGER REFERENCES users(id),
+    user_b_id INTEGER REFERENCES users(id),
     created_at TEXT,
     UNIQUE(user_a_id, user_b_id)
   );
   CREATE TABLE IF NOT EXISTS room_memberships (
-    room_id INTEGER,
-    user_id INTEGER,
+    room_id INTEGER REFERENCES rooms(id),
+    user_id INTEGER REFERENCES users(id),
     role TEXT,
     joined_at TEXT,
     UNIQUE(room_id, user_id)
   );
   CREATE TABLE IF NOT EXISTS room_reads (
-    room_id INTEGER,
-    user_id INTEGER,
+    room_id INTEGER REFERENCES rooms(id),
+    user_id INTEGER REFERENCES users(id),
     last_read_at TEXT,
     UNIQUE(room_id, user_id)
   );
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id INTEGER,
-    sender_user_id INTEGER,
+    room_id INTEGER REFERENCES rooms(id),
+    sender_user_id INTEGER REFERENCES users(id),
     body TEXT,
     created_at TEXT,
     edited_at TEXT,
@@ -58,6 +59,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_messages_sender_created ON messages(sender_user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_room_memberships_user_room ON room_memberships(user_id, room_id);
 `);
 
 try {

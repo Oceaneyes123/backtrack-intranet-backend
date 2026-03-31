@@ -1,9 +1,21 @@
 import { WebSocketServer } from "ws";
 import config from "./config.js";
+import logger from "./logger.js";
+
+const HEARTBEAT_INTERVAL = config.WS_HEARTBEAT_INTERVAL_MS || 30_000;
+const SSE_HEARTBEAT_INTERVAL = Math.max(10_000, Math.floor(HEARTBEAT_INTERVAL / 2));
+const parsedOrigins = config.ORIGIN === "*"
+  ? "*"
+  : config.ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
+
+const getSseAllowOrigin = (requestOrigin) => {
+  if (parsedOrigins === "*") return "*";
+  if (requestOrigin && parsedOrigins.includes(requestOrigin)) return requestOrigin;
+  return parsedOrigins.length === 1 ? parsedOrigins[0] : null;
+};
 
 const attachRealtime = (server, app, deps) => {
   const {
-    ORIGIN,
     REQUIRE_AUTH,
     authMiddleware,
     verifyToken,
@@ -18,6 +30,13 @@ const attachRealtime = (server, app, deps) => {
 
   const subscribers = new Map();
   const sseSubscribers = new Map();
+
+  const isClosedSseResponse = (res) => (
+    !res
+    || res.writableEnded
+    || res.destroyed
+    || res.socket?.destroyed
+  );
 
   const getSubscriberSet = (roomId) => {
     const normalized = roomId || "general";
@@ -39,7 +58,15 @@ const attachRealtime = (server, app, deps) => {
     const sseClients = sseSubscribers.get(roomId);
     if (sseClients) {
       sseClients.forEach((res) => {
-        res.write(`data: ${payload}\n\n`);
+        if (isClosedSseResponse(res)) {
+          removeSseSubscriber(roomId, res);
+          return;
+        }
+        try {
+          res.write(`data: ${payload}\n\n`);
+        } catch {
+          removeSseSubscriber(roomId, res);
+        }
       });
     }
   };
@@ -65,27 +92,54 @@ const attachRealtime = (server, app, deps) => {
     const user = req.user || getAnonymousUser();
     const room = getRoomOrCreatePublic(roomId);
     if (!requireRoomAccess(room, user, res)) return;
+    const canonicalRoomName = room.name;
 
-    res.writeHead(200, {
+    const headers = {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
-      "Access-Control-Allow-Origin": ORIGIN
-    });
+      "X-Accel-Buffering": "no"
+    };
+    const allowOrigin = getSseAllowOrigin(req.headers.origin);
+    if (allowOrigin) {
+      headers["Access-Control-Allow-Origin"] = allowOrigin;
+      headers.Vary = "Origin";
+    }
+    res.writeHead(200, headers);
+    res.flushHeaders?.();
     res.write("retry: 3000\n\n");
 
-    addSseSubscriber(roomId, res);
+    addSseSubscriber(canonicalRoomName, res);
+
+    const heartbeat = setInterval(() => {
+      if (isClosedSseResponse(res)) {
+        removeSseSubscriber(canonicalRoomName, res);
+        clearInterval(heartbeat);
+        return;
+      }
+      try {
+        res.write(`: ping ${Date.now()}\n\n`);
+      } catch {
+        removeSseSubscriber(canonicalRoomName, res);
+        clearInterval(heartbeat);
+      }
+    }, SSE_HEARTBEAT_INTERVAL);
 
     if (config.DEBUG_LOGS) {
-      console.log(`[sse] connected room=${roomId} user=${user?.id || "unknown"}`);
+      logger.debug({ roomId: canonicalRoomName, userId: user?.id }, "sse connected");
     }
 
-    req.on("close", () => {
-      removeSseSubscriber(roomId, res);
+    const cleanup = () => {
+      removeSseSubscriber(canonicalRoomName, res);
+      clearInterval(heartbeat);
       if (config.DEBUG_LOGS) {
-        console.log(`[sse] disconnected room=${roomId} user=${user?.id || "unknown"}`);
+        logger.debug({ roomId: canonicalRoomName, userId: user?.id }, "sse disconnected");
       }
-    });
+    };
+
+    req.on("close", cleanup);
+    res.on("close", cleanup);
+    res.on("error", cleanup);
   });
 
   const wss = new WebSocketServer({
@@ -98,12 +152,8 @@ const attachRealtime = (server, app, deps) => {
   });
 
   const extractWsToken = (req) => {
-    const url = new URL(req.url || "", `http://${req.headers.host}`);
-    const tokenQuery = url.searchParams.get("token");
-    if (tokenQuery) return tokenQuery;
-
+    // Token extraction via subprotocol header only — query params intentionally unsupported.
     const header = String(req.headers["sec-websocket-protocol"] || "");
-    // Header format: "proto1, proto2, proto3"
     const parts = header
       .split(",")
       .map((p) => p.trim())
@@ -143,7 +193,7 @@ const attachRealtime = (server, app, deps) => {
       })
       .catch(() => {
         if (config.DEBUG_LOGS) {
-          console.warn("[ws] auth failed");
+          logger.warn("ws auth failed");
         }
         socket.destroy();
       });
@@ -151,12 +201,13 @@ const attachRealtime = (server, app, deps) => {
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url || "", `http://${req.headers.host}`);
-    const roomId = url.searchParams.get("room") || "general";
-    const room = getRoomOrCreatePublic(roomId);
+    const roomRef = url.searchParams.get("room") || "general";
+    const room = getRoomOrCreatePublic(roomRef);
     if (!room) {
       ws.close(1008, "Room not found");
       return;
     }
+    const canonicalRoomName = room.name;
     const user = ws.user || getAnonymousUser();
     if (isPublicRoomName(room.name)) {
       ensureMembership(room.id, user.id);
@@ -165,22 +216,49 @@ const attachRealtime = (server, app, deps) => {
       return;
     }
 
-    const roomSubscribers = getSubscriberSet(roomId);
+    const roomSubscribers = getSubscriberSet(canonicalRoomName);
     roomSubscribers.add(ws);
 
     if (config.DEBUG_LOGS) {
-      console.log(`[ws] connected room=${roomId} user=${user?.id || "unknown"}`);
+      logger.debug({ roomId: canonicalRoomName, userId: user?.id }, "ws connected");
     }
 
     ws.on("close", () => {
       roomSubscribers.delete(ws);
       if (config.DEBUG_LOGS) {
-        console.log(`[ws] disconnected room=${roomId} user=${user?.id || "unknown"}`);
+        logger.debug({ roomId: canonicalRoomName, userId: user?.id }, "ws disconnected");
       }
     });
+
+    // B6: Mark alive on pong.
+    ws.isAlive = true;
+    ws.on("pong", () => { ws.isAlive = true; });
   });
 
-  return { publish };
+  // B6: Heartbeat interval — ping all clients, terminate dead sockets.
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (ws.isAlive === false) {
+        ws.terminate();
+        return;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, HEARTBEAT_INTERVAL);
+
+  wss.on("close", () => clearInterval(heartbeatInterval));
+
+  // I2: Shutdown helper — close all WS connections and clear intervals.
+  const shutdown = () => {
+    clearInterval(heartbeatInterval);
+    wss.clients.forEach((ws) => {
+      try { ws.close(1001, "Server shutting down"); } catch {}
+    });
+    wss.close();
+  };
+
+  return { publish, shutdown };
 };
 
 export { attachRealtime };

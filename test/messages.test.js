@@ -8,6 +8,7 @@ process.env.REQUIRE_AUTH = "false";
 const { default: db } = await import("../db.js");
 const roomsRepo = await import("../repo/rooms.js");
 const messagesRepo = await import("../repo/messages.js");
+const readsRepo = await import("../repo/reads.js");
 
 const resetDb = () => {
   db.exec(`
@@ -107,4 +108,81 @@ test("cleanupRetention removes old messages", () => {
   messagesRepo.cleanupRetention(1);
   const count = db.prepare("SELECT COUNT(1) as count FROM messages WHERE room_id = ?").get(room.id).count;
   assert.equal(count, 0);
+});
+
+test("updateMessageBody edits stored message content", () => {
+  resetDb();
+  const user = createUser("dana@example.com", "Dana");
+  const room = roomsRepo.getOrCreateRoom("general", "General");
+
+  const createdAt = new Date().toISOString();
+  const inserted = messagesRepo.insertMessage({
+    roomId: room.id,
+    userId: user.id,
+    body: "Original body",
+    createdAt,
+    clientMessageId: null
+  });
+
+  const editedAt = new Date(Date.now() + 1000).toISOString();
+  const { info, message } = messagesRepo.updateMessageBody({
+    roomId: room.id,
+    messageId: inserted.lastInsertRowid,
+    body: "Edited body",
+    editedAt
+  });
+
+  assert.equal(info.changes, 1);
+  assert.equal(message.body, "Edited body");
+  assert.equal(message.edited_at, editedAt);
+
+  const listed = messagesRepo.getMessages({ roomId: room.id, limit: 10, before: null });
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].body, "Edited body");
+  assert.equal(listed[0].edited_at, editedAt);
+});
+
+test("softDeleteMessage hides deleted messages from history previews and unread counts", () => {
+  resetDb();
+  const sender = createUser("erin@example.com", "Erin");
+  const reader = createUser("frank@example.com", "Frank");
+  const room = roomsRepo.getOrCreateRoom("general", "General");
+  roomsRepo.ensureMembership(room.id, sender.id);
+  roomsRepo.ensureMembership(room.id, reader.id);
+
+  const firstCreatedAt = new Date(Date.now() - 2000).toISOString();
+  const secondCreatedAt = new Date(Date.now() - 1000).toISOString();
+  messagesRepo.insertMessage({
+    roomId: room.id,
+    userId: sender.id,
+    body: "First visible",
+    createdAt: firstCreatedAt,
+    clientMessageId: null
+  });
+  const second = messagesRepo.insertMessage({
+    roomId: room.id,
+    userId: sender.id,
+    body: "Delete me",
+    createdAt: secondCreatedAt,
+    clientMessageId: null
+  });
+
+  assert.equal(readsRepo.getUnreadCount(room.id, reader.id, null), 2);
+
+  const deletedAt = new Date().toISOString();
+  const info = messagesRepo.softDeleteMessage({
+    roomId: room.id,
+    messageId: second.lastInsertRowid,
+    deletedAt
+  });
+
+  assert.equal(info.changes, 1);
+  assert.equal(readsRepo.getUnreadCount(room.id, reader.id, null), 1);
+
+  const visible = messagesRepo.getMessages({ roomId: room.id, limit: 10, before: null });
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].body, "First visible");
+
+  const lastMessage = messagesRepo.getLastMessageForRoom(room.id);
+  assert.equal(lastMessage.body, "First visible");
 });

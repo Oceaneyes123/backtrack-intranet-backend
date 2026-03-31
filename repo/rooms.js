@@ -1,10 +1,18 @@
 import { randomUUID } from "node:crypto";
 import db from "../db.js";
 
+const buildPlaceholders = (items) => items.map(() => "?").join(", ");
+
 const getRoomByName = (roomName) => {
   const normalized = String(roomName || "").trim();
   if (!normalized) return null;
   return db.prepare("SELECT id, name, display_name FROM rooms WHERE name = ?").get(normalized) || null;
+};
+
+const getRoomById = (roomId) => {
+  const normalized = Number(roomId);
+  if (!Number.isInteger(normalized) || normalized <= 0) return null;
+  return db.prepare("SELECT id, name, display_name FROM rooms WHERE id = ?").get(normalized) || null;
 };
 
 const getOrCreateRoom = (roomName, displayName = null) => {
@@ -58,6 +66,28 @@ const getRoomMembers = (roomId) => {
     }));
 };
 
+const getRoomMembersForRooms = (roomIds) => {
+  if (!Array.isArray(roomIds) || !roomIds.length) return [];
+  const placeholders = buildPlaceholders(roomIds);
+  return db
+    .prepare(
+      `
+      SELECT rm.room_id, u.email, u.display_name, u.avatar_url
+      FROM room_memberships rm
+      JOIN users u ON u.id = rm.user_id
+      WHERE rm.room_id IN (${placeholders})
+      ORDER BY rm.room_id, u.display_name IS NULL, u.display_name, u.email
+    `
+    )
+    .all(...roomIds)
+    .map((row) => ({
+      roomId: row.room_id,
+      email: row.email,
+      displayName: row.display_name || row.email || "User",
+      avatarUrl: row.avatar_url || null
+    }));
+};
+
 const getDirectRoomOtherUser = (roomId, userId) => {
   if (!roomId || !userId) return null;
   return db
@@ -103,17 +133,20 @@ const listRoomsForUser = (userId) => {
       LEFT JOIN direct_rooms d ON d.room_id = r.id
       LEFT JOIN users u ON u.id = CASE WHEN d.user_a_id = ? THEN d.user_b_id ELSE d.user_a_id END
       WHERE rm.user_id = ?
+      ORDER BY r.created_at DESC
     `
     )
     .all(userId, userId);
 };
 
 export {
+  getRoomById,
   getRoomByName,
   getOrCreateRoom,
   ensureMembership,
   isMember,
   getRoomMembers,
+  getRoomMembersForRooms,
   getDirectRoomOtherUser,
   getOrCreateDirectRoom,
   listRoomsForUser

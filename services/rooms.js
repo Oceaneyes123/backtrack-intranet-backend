@@ -1,14 +1,16 @@
 import {
+  getRoomById,
   getRoomByName,
   getOrCreateRoom,
   ensureMembership as ensureMembershipRepo,
   isMember as isMemberRepo,
   getRoomMembers,
+  getRoomMembersForRooms,
   getDirectRoomOtherUser,
   listRoomsForUser as listRoomsForUserRows
 } from "../repo/rooms.js";
-import { getLastReadAt, getOtherLastReadAt, getUnreadCount } from "../repo/reads.js";
-import { getLastMessageForRoom } from "../repo/messages.js";
+import { getLastReadAt, getOtherLastReadAt, getUnreadCount, getRoomReadStatesForUser } from "../repo/reads.js";
+import { getLastMessagesForRooms } from "../repo/messages.js";
 
 const isPublicRoomName = (roomName) => {
   return String(roomName || "").trim().toLowerCase() === "general";
@@ -23,6 +25,8 @@ const getRoomOrCreatePublic = (roomName) => {
     }
     return existing;
   }
+  const byId = getRoomById(normalized);
+  if (byId) return byId;
   if (isPublicRoomName(normalized)) return getOrCreateRoom(normalized, "General");
   return null;
 };
@@ -86,6 +90,22 @@ const listRoomsForUser = (user) => {
   ensureMembership(general.id, user.id);
 
   const rows = listRoomsForUserRows(user.id);
+  const roomIds = rows.map((row) => row.id);
+  const lastMessages = new Map(
+    getLastMessagesForRooms(roomIds).map((row) => [row.room_id, row])
+  );
+  const readStates = new Map(
+    getRoomReadStatesForUser(roomIds, user.id).map((row) => [row.roomId, row])
+  );
+  const membersByRoom = new Map();
+  getRoomMembersForRooms(roomIds).forEach((row) => {
+    if (!membersByRoom.has(row.roomId)) membersByRoom.set(row.roomId, []);
+    membersByRoom.get(row.roomId).push({
+      email: row.email,
+      displayName: row.displayName,
+      avatarUrl: row.avatarUrl
+    });
+  });
 
   return rows.map((row) => {
     const directOther = row.user_a_id || row.user_b_id
@@ -95,11 +115,9 @@ const listRoomsForUser = (user) => {
       { name: row.name, display_name: row.display_name },
       directOther
     );
-
-    const last = getLastMessageForRoom(row.id);
-    const lastReadAt = getLastReadAt(row.id, user.id);
-    const unreadCount = getUnreadCount(row.id, user.id, lastReadAt);
-    const members = getRoomMembers(row.id);
+    const last = lastMessages.get(row.id);
+    const readState = readStates.get(row.id);
+    const members = membersByRoom.get(row.id) || [];
 
     return {
       room: row.name,
@@ -108,8 +126,10 @@ const listRoomsForUser = (user) => {
       displayName,
       lastMessage: last?.body || "",
       lastMessageAt: last?.created_at || row.created_at || null,
-      unread: unreadCount,
-      members
+      unread: readState?.unreadCount || 0,
+      members,
+      lastReadAt: readState?.lastReadAt || null,
+      otherLastReadAt: readState?.otherLastReadAt || null
     };
   });
 };

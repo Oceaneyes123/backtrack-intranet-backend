@@ -8,6 +8,7 @@ process.env.REQUIRE_AUTH = "false";
 const { default: db } = await import("../db.js");
 const roomsRepo = await import("../repo/rooms.js");
 const messagesRepo = await import("../repo/messages.js");
+const readsRepo = await import("../repo/reads.js");
 const roomsService = await import("../services/rooms.js");
 
 const resetDb = () => {
@@ -40,14 +41,25 @@ test("listRoomsForUser includes general and direct rooms", () => {
   roomsRepo.ensureMembership(dmRoom.id, alice.id);
   roomsRepo.ensureMembership(dmRoom.id, bob.id);
 
-  const createdAt = new Date().toISOString();
+  const firstMessageAt = new Date(Date.now() - 2_000).toISOString();
+  const secondMessageAt = new Date(Date.now() - 1_000).toISOString();
   messagesRepo.insertMessage({
     roomId: dmRoom.id,
     userId: bob.id,
     body: "Hi Alice",
-    createdAt,
+    createdAt: firstMessageAt,
     clientMessageId: null
   });
+  messagesRepo.insertMessage({
+    roomId: dmRoom.id,
+    userId: bob.id,
+    body: "Follow up",
+    createdAt: secondMessageAt,
+    clientMessageId: null
+  });
+
+  readsRepo.setLastReadAt(dmRoom.id, alice.id, firstMessageAt);
+  readsRepo.setLastReadAt(dmRoom.id, bob.id, secondMessageAt);
 
   const rooms = roomsService.listRoomsForUser(alice);
   const general = rooms.find((room) => room.room === "general");
@@ -57,5 +69,10 @@ test("listRoomsForUser includes general and direct rooms", () => {
   assert.ok(direct);
   assert.equal(direct.type, "dm");
   assert.equal(direct.displayName, "Bob");
-  assert.equal(direct.lastMessage, "Hi Alice");
+  assert.equal(direct.lastMessage, "Follow up");
+  assert.equal(direct.unread, 1);
+  assert.equal(direct.lastReadAt, firstMessageAt);
+  assert.equal(direct.otherLastReadAt, secondMessageAt);
+  assert.equal(direct.members.length, 2);
+  assert.ok(direct.members.some((member) => member.email === "bob@example.com"));
 });

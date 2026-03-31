@@ -61,6 +61,15 @@ test("requireRoomAccess blocks private room without membership", () => {
   assert.equal(res.jsonBody.error, "Forbidden.");
 });
 
+test("getRoomOrCreatePublic resolves existing rooms by numeric id", () => {
+  resetDb();
+  const room = roomsRepo.getOrCreateRoom("group:resolver", "Resolver");
+
+  const resolved = roomsService.getRoomOrCreatePublic(String(room.id));
+
+  assert.deepEqual(resolved, room);
+});
+
 test("requireRoomAccess handles missing room or user", () => {
   resetDb();
   const resMissingRoom = createRes();

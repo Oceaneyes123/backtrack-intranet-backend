@@ -4,12 +4,16 @@ import config from "./config.js";
 // --- Schemas ---
 
 export const sendMessageSchema = z.object({
-  body: z.string().min(1, "Message body required.").max(config.MAX_MESSAGE_LENGTH, `Message too long (max ${config.MAX_MESSAGE_LENGTH} characters).`),
+  body: z.string()
+    .transform((s) => s.trim())
+    .pipe(z.string().min(1, "Message body required.").max(config.MAX_MESSAGE_LENGTH, `Message too long (max ${config.MAX_MESSAGE_LENGTH} characters).`)),
   clientMessageId: z.string().uuid().optional().nullable()
 });
 
 export const editMessageSchema = z.object({
-  body: z.string().min(1, "Message body required.").max(config.MAX_MESSAGE_LENGTH, `Message too long (max ${config.MAX_MESSAGE_LENGTH} characters).`)
+  body: z.string()
+    .transform((s) => s.trim())
+    .pipe(z.string().min(1, "Message body required.").max(config.MAX_MESSAGE_LENGTH, `Message too long (max ${config.MAX_MESSAGE_LENGTH} characters).`))
 });
 
 export const createDirectSchema = z.object({
@@ -17,10 +21,11 @@ export const createDirectSchema = z.object({
 });
 
 export const createGroupSchema = z.object({
-  name: z.string().min(1, "Group name required.").max(100, "Group name too long (max 100 characters)."),
+  name: z.string().transform((s) => s.trim()).pipe(z.string().min(1, "Group name required.").max(100, "Group name too long (max 100 characters).")),
   members: z
     .array(z.string().email("Invalid member email.").transform((e) => e.trim().toLowerCase()))
-    .min(2, "At least two members required.")
+    .transform((arr) => [...new Set(arr)])
+    .pipe(z.array(z.string()).min(2, "At least two unique member emails required."))
 });
 
 // --- Middleware helper ---

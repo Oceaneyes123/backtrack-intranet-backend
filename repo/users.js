@@ -1,5 +1,7 @@
 import db from "../db.js";
 
+const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
+
 const formatDisplayNameFromEmail = (email) => {
   if (!email) return "User";
   const handle = email.split("@")[0] || "user";
@@ -9,7 +11,7 @@ const formatDisplayNameFromEmail = (email) => {
 };
 
 const findUserByEmail = (email) => {
-  return db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+  return db.prepare("SELECT * FROM users WHERE email = ?").get(normalizeEmail(email));
 };
 
 const getUserByGoogleSub = (googleSub) => {
@@ -36,7 +38,7 @@ const getOrCreateUserFromToken = (payload) => {
   }
 
   if (payload.email) {
-    const pending = findUserByEmail(payload.email);
+    const pending = findUserByEmail(normalizeEmail(payload.email));
     if (pending && pending.google_sub?.startsWith("pending:")) {
       updateUserFromPending(pending.id, payload, now);
       return db.prepare("SELECT * FROM users WHERE id = ?").get(pending.id);
@@ -52,7 +54,7 @@ const getOrCreateUserFromToken = (payload) => {
 };
 
 const getOrCreatePendingUser = (email) => {
-  const normalized = String(email || "").trim().toLowerCase();
+  const normalized = normalizeEmail(email);
   if (!normalized) return null;
   const existing = findUserByEmail(normalized);
   if (existing) return existing;
@@ -78,6 +80,7 @@ const getAnonymousUser = () => {
 };
 
 export {
+  normalizeEmail,
   formatDisplayNameFromEmail,
   findUserByEmail,
   getUserByGoogleSub,

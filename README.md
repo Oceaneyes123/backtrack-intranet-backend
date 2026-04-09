@@ -38,6 +38,7 @@ Available scripts:
 | `dev` | `nodemon server.js` | Development server with auto-reload |
 | `start` | `node server.js` | Production server |
 | `test` | `node --test ...` | Run all tests (backend + chat widget) |
+| `backup:db` | `node scripts/backup.js` | Create a timestamped SQLite backup |
 
 ---
 
@@ -49,10 +50,11 @@ All variables are loaded from `.env` via [dotenv](https://github.com/motdotla/do
 |----------|---------|-------------|
 | `NODE_ENV` | `development` | Environment (`development` / `production`) |
 | `PORT` | `8787` | HTTP server port |
-| `ORIGIN` | `*` | Allowed CORS origins. Comma-separated list in production (e.g. `https://sites.google.com,https://example.com`). **Must not be `*` in production.** |
+| `ALLOWED_ORIGIN` | `*` | Allowed CORS origins. Comma-separated list in production (e.g. `https://sites.google.com,https://example.com`). **Must not be `*` in production.** |
 | `DATABASE_PATH` | `./data/chat.db` | SQLite database file path |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth2 client ID. **Required in production when auth is enabled.** |
 | `REQUIRE_AUTH` | `false` | Enforce authentication on all endpoints. **Must be `true` in production.** |
+| `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated list of permitted email domains (e.g. `backtrack.com`). **Required in production when `REQUIRE_AUTH=true`.** |
 | `MESSAGE_RETENTION_DAYS` | `30` | Auto-delete messages older than this |
 | `MAX_MESSAGE_LENGTH` | `4000` | Maximum message body length (characters) |
 | `RATE_LIMIT_ENABLED` | `false` | Enable per-IP rate limiting |
@@ -65,9 +67,10 @@ All variables are loaded from `.env` via [dotenv](https://github.com/motdotla/do
 ### Production validation
 
 When `NODE_ENV=production`, the server exits on startup if:
-- `ORIGIN` is `*`
+- `ALLOWED_ORIGIN` is `*`
 - `REQUIRE_AUTH` is `false`
 - `REQUIRE_AUTH` is `true` but `GOOGLE_CLIENT_ID` is empty
+- `REQUIRE_AUTH` is `true` but `ALLOWED_EMAIL_DOMAINS` is empty
 
 ---
 
@@ -346,6 +349,87 @@ Step-by-step setup for Google OAuth2:
 8. Add the redirect URI with the real extension ID to the OAuth client
 9. Start the backend with `REQUIRE_AUTH=true`
 10. Click **Sign In** in the extension popup and authorize
+
+---
+
+## Database Backup & Restore
+
+### Creating a Backup
+
+```bash
+cd backend
+npm run backup:db
+```
+
+Creates a timestamped snapshot in `backend/data/backups/` (e.g. `chat-2024-01-15T10-30-00.db`).
+
+The script:
+1. Connects to the live database read-only
+2. Runs a WAL checkpoint to flush pending writes
+3. Uses SQLite's native online backup API for a safe, consistent copy
+4. Verifies the backup with `PRAGMA integrity_check`
+5. Exits non-zero and removes the file if any step fails
+
+### Restore Runbook
+
+Follow these steps to restore from a backup snapshot:
+
+**1. Stop the server**
+```bash
+# On Render: use the dashboard to suspend the service
+# Locally:
+pkill -f "node server.js"
+```
+
+**2. Create a rollback copy of the current database**
+```bash
+cp backend/data/chat.db backend/data/chat.db.rollback-$(date +%Y%m%d%H%M%S)
+```
+
+**3. Replace the database with the chosen snapshot**
+```bash
+cp backend/data/backups/chat-<timestamp>.db backend/data/chat.db
+```
+
+**4. Verify integrity**
+```bash
+node -e "
+import Database from 'better-sqlite3';
+const db = new Database('./data/chat.db', { readonly: true });
+const r = db.pragma('integrity_check');
+console.log(r);
+db.close();
+"
+```
+Expected output: `[ { integrity_check: 'ok' } ]`
+
+**5. Start the server and verify**
+```bash
+npm start
+curl http://localhost:8787/health
+```
+
+Check that `/health` returns `{ "status": "ok" }` and that room/message counts look correct.
+
+### Scheduling Recommendation
+
+For small deployments:
+
+| Cadence | Retention | Method |
+|---------|-----------|--------|
+| Daily | 7 copies | Cron or platform scheduler |
+
+Example cron (runs at 2 AM daily):
+```
+0 2 * * * cd /path/to/backend && npm run backup:db
+```
+
+To prune old backups, keeping the 7 most recent:
+```bash
+ls -t backend/data/backups/chat-*.db | tail -n +8 | xargs -r rm
+```
+
+Restore is manual only — there is no admin restore endpoint.
 
 ---
 

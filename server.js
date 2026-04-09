@@ -35,6 +35,7 @@ import {
 import { requireMessageOwnership } from "./services/messages.js";
 import { attachRealtime } from "./realtime.js";
 import { validate, sendMessageSchema, editMessageSchema, createDirectSchema, createGroupSchema } from "./validation.js";
+import { parseOrigins } from "./origin.js";
 import db from "./db.js";
 
 const app = express();
@@ -52,9 +53,7 @@ app.use(helmet({
 }));
 
 // S5: CORS origin whitelist — support comma-separated origins for multi-domain.
-const parsedOrigins = config.ORIGIN === "*"
-  ? "*"
-  : config.ORIGIN.split(",").map((o) => o.trim()).filter(Boolean);
+const parsedOrigins = parseOrigins(config.ORIGIN);
 
 const corsOriginFn = parsedOrigins === "*"
   ? "*"
@@ -193,6 +192,13 @@ app.post("/api/chat/direct", authMiddleware, validate(createDirectSchema), (req,
     res.status(401).json({ error: "Authentication required." });
     return;
   }
+  if (config.ALLOWED_EMAIL_DOMAINS.length > 0) {
+    const domain = email.split("@")[1] || "";
+    if (!config.ALLOWED_EMAIL_DOMAINS.includes(domain)) {
+      res.status(422).json({ error: "Email domain not permitted." });
+      return;
+    }
+  }
   const targetUser = getOrCreatePendingUser(email);
   if (!targetUser) {
     res.status(404).json({ error: "User not found." });
@@ -211,6 +217,17 @@ app.post("/api/chat/groups", authMiddleware, validate(createGroupSchema), (req, 
   if (config.REQUIRE_AUTH && requester.google_sub === "anonymous") {
     res.status(401).json({ error: "Authentication required." });
     return;
+  }
+
+  if (config.ALLOWED_EMAIL_DOMAINS.length > 0) {
+    const invalidEmail = normalizedEmails.find((em) => {
+      const domain = em.split("@")[1] || "";
+      return !config.ALLOWED_EMAIL_DOMAINS.includes(domain);
+    });
+    if (invalidEmail) {
+      res.status(422).json({ error: "Email domain not permitted." });
+      return;
+    }
   }
 
   const roomName = `group:${randomUUID()}`;

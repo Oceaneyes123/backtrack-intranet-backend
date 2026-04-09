@@ -1,12 +1,11 @@
 import { WebSocketServer } from "ws";
 import config from "./config.js";
 import logger from "./logger.js";
+import { parseOrigins } from "./origin.js";
 
 const HEARTBEAT_INTERVAL = config.WS_HEARTBEAT_INTERVAL_MS || 30_000;
 const SSE_HEARTBEAT_INTERVAL = Math.max(10_000, Math.floor(HEARTBEAT_INTERVAL / 2));
-const parsedOrigins = config.ORIGIN === "*"
-  ? "*"
-  : config.ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
+const parsedOrigins = parseOrigins(config.ORIGIN);
 
 const getSseAllowOrigin = (requestOrigin) => {
   if (parsedOrigins === "*") return "*";
@@ -182,6 +181,16 @@ const attachRealtime = (server, app, deps) => {
     if (!req.url?.startsWith("/ws/chat")) {
       socket.destroy();
       return;
+    }
+
+    // WS origin validation
+    if (parsedOrigins !== "*") {
+      const origin = req.headers.origin;
+      if (!origin || !parsedOrigins.includes(origin)) {
+        socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
     }
 
     verifyWsConnection(req)

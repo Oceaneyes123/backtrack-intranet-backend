@@ -1,7 +1,7 @@
 import { OAuth2Client } from "google-auth-library";
 import config from "./config.js";
 import logger from "./logger.js";
-import { getAnonymousUser, getOrCreateUserFromToken } from "./repo/users.js";
+import { getAnonymousUser, getOrCreateUserFromToken, normalizeEmail } from "./repo/users.js";
 
 const oauthClient = config.GOOGLE_CLIENT_ID ? new OAuth2Client(config.GOOGLE_CLIENT_ID) : null;
 const TOKEN_VERIFY_TTL_MS = 5 * 60 * 1000;
@@ -77,6 +77,33 @@ const createAuthMiddleware = ({
 
   try {
     const payload = await verify(token);
+
+    // Tenant check: email must be verified
+    if (payload.email_verified !== true) {
+      if (requireAuth) {
+        res.status(401).json({ error: "Email not verified." });
+        return;
+      }
+      req.user = getAnonymousUserFn();
+      next();
+      return;
+    }
+
+    // Tenant check: domain allowlist
+    if (config.ALLOWED_EMAIL_DOMAINS.length > 0) {
+      const email = normalizeEmail(payload.email);
+      const domain = email.split("@")[1] || "";
+      if (!config.ALLOWED_EMAIL_DOMAINS.includes(domain)) {
+        if (requireAuth) {
+          res.status(403).json({ error: "Account domain not permitted." });
+          return;
+        }
+        req.user = getAnonymousUserFn();
+        next();
+        return;
+      }
+    }
+
     const user = getOrCreateUserFromTokenFn(payload);
     req.user = user;
     next();

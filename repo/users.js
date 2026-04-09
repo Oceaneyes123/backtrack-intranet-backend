@@ -23,24 +23,26 @@ const updateUserLastSeen = (userId, now) => {
 };
 
 const updateUserFromPending = (pendingId, payload, now) => {
+  const normalizedEmail = normalizeEmail(payload.email);
   db.prepare(
-    "UPDATE users SET google_sub = ?, display_name = ?, avatar_url = ?, last_seen_at = ? WHERE id = ?"
-  ).run(payload.sub, payload.name || null, payload.picture || null, now, pendingId);
+    "UPDATE users SET google_sub = ?, email = ?, display_name = ?, avatar_url = ?, last_seen_at = ? WHERE id = ?"
+  ).run(payload.sub, normalizedEmail || null, payload.name || null, payload.picture || null, now, pendingId);
 };
 
 const getOrCreateUserFromToken = (payload) => {
   if (!payload?.sub) return null;
   const now = new Date().toISOString();
+  const normalizedEmail = normalizeEmail(payload.email);
   const existing = getUserByGoogleSub(payload.sub);
   if (existing) {
     updateUserLastSeen(existing.id, now);
     return existing;
   }
 
-  if (payload.email) {
-    const pending = findUserByEmail(normalizeEmail(payload.email));
+  if (normalizedEmail) {
+    const pending = findUserByEmail(normalizedEmail);
     if (pending && pending.google_sub?.startsWith("pending:")) {
-      updateUserFromPending(pending.id, payload, now);
+      updateUserFromPending(pending.id, { ...payload, email: normalizedEmail }, now);
       return db.prepare("SELECT * FROM users WHERE id = ?").get(pending.id);
     }
   }
@@ -49,7 +51,7 @@ const getOrCreateUserFromToken = (payload) => {
     .prepare(
       "INSERT INTO users (google_sub, email, display_name, avatar_url, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)"
     )
-    .run(payload.sub, payload.email || null, payload.name || null, payload.picture || null, now, now);
+    .run(payload.sub, normalizedEmail || null, payload.name || null, payload.picture || null, now, now);
   return db.prepare("SELECT * FROM users WHERE id = ?").get(info.lastInsertRowid);
 };
 

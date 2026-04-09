@@ -5,7 +5,7 @@ process.env.DATABASE_PATH = process.env.DATABASE_PATH || "./data/test-chat.db";
 process.env.GOOGLE_CLIENT_ID = "";
 process.env.REQUIRE_AUTH = "false";
 
-const { extractToken, createAuthMiddleware, createCachedVerifier } = await import("../auth.js");
+const { extractToken, createAuthMiddleware, createCachedVerifier, authenticateToken } = await import("../auth.js");
 
 const runMiddleware = async (middleware, reqOverrides = {}) => {
   const req = { headers: {}, query: {}, ...reqOverrides };
@@ -79,6 +79,50 @@ test("auth middleware falls back to anonymous when optional and invalid token", 
   assert.equal(res.statusCode, 200);
   assert.equal(nextCalled, true);
   assert.equal(req.user.id, "anon");
+});
+
+test("auth middleware rejects unverified email when required", async () => {
+  const middleware = createAuthMiddleware({
+    requireAuth: true,
+    verify: async () => ({ sub: "user-1", email: "user@backtrack.com", email_verified: false }),
+    getAnonymousUserFn: () => ({ id: "anon" }),
+    getOrCreateUserFromTokenFn: () => ({ id: "user" })
+  });
+  const { res, nextCalled } = await runMiddleware(middleware, {
+    headers: { authorization: "Bearer nope" }
+  });
+  assert.equal(res.statusCode, 401);
+  assert.deepEqual(res.jsonBody, { error: "Email not verified." });
+  assert.equal(nextCalled, false);
+});
+
+test("auth middleware rejects disallowed domain when required", async () => {
+  const middleware = createAuthMiddleware({
+    requireAuth: true,
+    verify: async () => ({ sub: "user-1", email: "user@example.com", email_verified: true }),
+    allowedDomains: ["backtrack.com"],
+    getAnonymousUserFn: () => ({ id: "anon" }),
+    getOrCreateUserFromTokenFn: () => ({ id: "user" })
+  });
+  const { res, nextCalled } = await runMiddleware(middleware, {
+    headers: { authorization: "Bearer nope" }
+  });
+  assert.equal(res.statusCode, 403);
+  assert.deepEqual(res.jsonBody, { error: "Account domain not permitted." });
+  assert.equal(nextCalled, false);
+});
+
+test("authenticateToken enforces tenant policy for websocket and shared auth paths", async () => {
+  await assert.rejects(
+    () => authenticateToken("token", {
+      requireAuth: true,
+      verify: async () => ({ sub: "user-1", email: "user@example.com", email_verified: true }),
+      allowedDomains: ["backtrack.com"],
+      getAnonymousUserFn: () => ({ id: "anon" }),
+      getOrCreateUserFromTokenFn: () => ({ id: "user" })
+    }),
+    (error) => error?.status === 403 && error?.message === "Account domain not permitted."
+  );
 });
 
 test("createCachedVerifier reuses successful token verification results until expiry", async () => {

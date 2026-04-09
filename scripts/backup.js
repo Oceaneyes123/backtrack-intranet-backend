@@ -23,7 +23,7 @@ console.log(`Backing up ${DB_PATH} → ${backupPath}`);
 
 let db;
 try {
-  db = new Database(DB_PATH, { readonly: true });
+  db = new Database(DB_PATH);
   db.pragma("wal_checkpoint(TRUNCATE)");
   await db.backup(backupPath);
 

@@ -54,7 +54,7 @@ All variables are loaded from `.env` via [dotenv](https://github.com/motdotla/do
 | `DATABASE_PATH` | `./data/chat.db` | SQLite database file path |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth2 client ID. **Required in production when auth is enabled.** |
 | `REQUIRE_AUTH` | `false` | Enforce authentication on all endpoints. **Must be `true` in production.** |
-| `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated list of permitted email domains (e.g. `backtrack.com`). **Required in production when `REQUIRE_AUTH=true`.** |
+| `ALLOWED_EMAIL_DOMAINS` | `backtrack.com` | Comma-separated list of permitted email domains. Defaults to `backtrack.com`. |
 | `MESSAGE_RETENTION_DAYS` | `30` | Auto-delete messages older than this |
 | `MAX_MESSAGE_LENGTH` | `4000` | Maximum message body length (characters) |
 | `RATE_LIMIT_ENABLED` | `false` | Enable per-IP rate limiting |
@@ -70,7 +70,6 @@ When `NODE_ENV=production`, the server exits on startup if:
 - `ALLOWED_ORIGIN` is `*`
 - `REQUIRE_AUTH` is `false`
 - `REQUIRE_AUTH` is `true` but `GOOGLE_CLIENT_ID` is empty
-- `REQUIRE_AUTH` is `true` but `ALLOWED_EMAIL_DOMAINS` is empty
 
 ---
 
@@ -248,7 +247,7 @@ Messages older than `MESSAGE_RETENTION_DAYS` are automatically deleted when new 
 | Layer | Implementation |
 |-------|---------------|
 | **Headers** | Helmet sets security headers (HSTS, X-Content-Type-Options, etc.). CSP is disabled for this API-only server. |
-| **CORS** | Origin whitelist via `ORIGIN` env var. Supports comma-separated origins. `*` is rejected in production. |
+| **CORS** | Origin whitelist via `ALLOWED_ORIGIN` env var. Supports comma-separated origins. `*` is rejected in production. |
 | **Input validation** | Zod schemas validate all POST request bodies (message body length, email format, member list size). |
 | **Body size limit** | 16 KB max request body via Express. |
 | **Rate limiting** | Optional per-IP rate limiting (configurable window and max requests). |
@@ -289,7 +288,7 @@ cd backend
 npm test
 ```
 
-Runs **24 tests** (18 backend + 6 chat widget utility tests) using Node.js built-in test runner:
+Runs **39 tests** (31 backend + 8 chat widget utility tests) using Node.js built-in test runner:
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
@@ -316,15 +315,16 @@ The backend is deployed on [Render](https://render.com).
 NODE_ENV=production
 GOOGLE_CLIENT_ID=<your-oauth-client-id>
 REQUIRE_AUTH=true
-ORIGIN=https://sites.google.com
+ALLOWED_ORIGIN=https://sites.google.com
 TRUST_PROXY=true
 ```
 
 ### Checklist
 
-- [ ] `ORIGIN` is set to the exact origin(s) of the intranet pages
+- [ ] `ALLOWED_ORIGIN` is set to the exact origin(s) of the intranet pages
 - [ ] `REQUIRE_AUTH=true`
 - [ ] `GOOGLE_CLIENT_ID` matches the extension's `manifest.json` OAuth client ID
+- [ ] `ALLOWED_EMAIL_DOMAINS` is set if you need domains other than the default `backtrack.com`
 - [ ] `TRUST_PROXY=true` (Render terminates TLS at the proxy)
 - [ ] `DATABASE_PATH` points to a persistent disk location
 - [ ] HTTPS is enforced (handled by Render)
@@ -364,7 +364,7 @@ npm run backup:db
 Creates a timestamped snapshot in `backend/data/backups/` (e.g. `chat-2024-01-15T10-30-00.db`).
 
 The script:
-1. Connects to the live database read-only
+1. Connects to the live database with write access for a WAL checkpoint
 2. Runs a WAL checkpoint to flush pending writes
 3. Uses SQLite's native online backup API for a safe, consistent copy
 4. Verifies the backup with `PRAGMA integrity_check`

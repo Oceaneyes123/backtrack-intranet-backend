@@ -6,8 +6,8 @@ import http from "http";
 import { randomUUID } from "node:crypto";
 import config from "./config.js";
 import logger from "./logger.js";
-import { createAuthMiddleware, verifyToken } from "./auth.js";
-import { getAnonymousUser, getOrCreateUserFromToken, getOrCreatePendingUser } from "./repo/users.js";
+import { authenticateToken, createAuthMiddleware } from "./auth.js";
+import { getAnonymousUser, getOrCreatePendingUser } from "./repo/users.js";
 import { getOrCreateDirectRoom, getOrCreateRoom } from "./repo/rooms.js";
 import {
   getMessages,
@@ -403,10 +403,9 @@ const server = http.createServer(app);
 const { publish, shutdown: shutdownRealtime } = attachRealtime(server, app, {
   ORIGIN: config.ORIGIN,
   REQUIRE_AUTH: config.REQUIRE_AUTH,
+  authenticateToken,
   authMiddleware,
-  verifyToken,
   getAnonymousUser,
-  getOrCreateUserFromToken,
   getRoomOrCreatePublic,
   isPublicRoomName,
   ensureMembership,

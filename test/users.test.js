@@ -43,6 +43,24 @@ test("getOrCreateUserFromToken upgrades pending user", () => {
   assert.equal(user.google_sub, "google-sub-123");
   assert.equal(user.display_name, "Sam Example");
   assert.equal(user.avatar_url, "https://example.com/sam.png");
+  assert.equal(user.email, "sam@example.com");
+});
+
+test("getOrCreateUserFromToken normalizes mixed-case email on first insert", () => {
+  resetDb();
+
+  const payload = {
+    sub: "google-sub-mixed",
+    email: "  Sam.Example@Backtrack.com ",
+    name: "Sam Example",
+    picture: null
+  };
+
+  const user = usersRepo.getOrCreateUserFromToken(payload);
+  assert.equal(user.email, "sam.example@backtrack.com");
+
+  const second = usersRepo.getOrCreatePendingUser("sam.example@backtrack.com");
+  assert.equal(second.id, user.id);
 });
 
 test("getAnonymousUser reuses the same record", () => {

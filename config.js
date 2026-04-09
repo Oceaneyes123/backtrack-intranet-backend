@@ -1,3 +1,5 @@
+const DEFAULT_ALLOWED_EMAIL_DOMAINS = ["backtrack.com"];
+
 const config = {
   NODE_ENV: process.env.NODE_ENV || "development",
   PORT: process.env.PORT || 8787,
@@ -7,7 +9,7 @@ const config = {
   REQUIRE_AUTH: process.env.REQUIRE_AUTH === "true",
   ALLOWED_EMAIL_DOMAINS: process.env.ALLOWED_EMAIL_DOMAINS
     ? process.env.ALLOWED_EMAIL_DOMAINS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)
-    : [],
+    : DEFAULT_ALLOWED_EMAIL_DOMAINS,
   MESSAGE_RETENTION_DAYS: Number(process.env.MESSAGE_RETENTION_DAYS || 30),
   MAX_MESSAGE_LENGTH: Number(process.env.MAX_MESSAGE_LENGTH || 4000),
   RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED === "true",
@@ -25,8 +27,6 @@ if (config.NODE_ENV === "production") {
   if (config.ORIGIN === "*") errors.push("ALLOWED_ORIGIN must not be '*' in production.");
   if (config.REQUIRE_AUTH && !config.GOOGLE_CLIENT_ID) errors.push("GOOGLE_CLIENT_ID is required when REQUIRE_AUTH=true.");
   if (!config.REQUIRE_AUTH) errors.push("REQUIRE_AUTH should be 'true' in production (set REQUIRE_AUTH=true).");
-  if (config.REQUIRE_AUTH && !config.ALLOWED_EMAIL_DOMAINS.length)
-    errors.push("ALLOWED_EMAIL_DOMAINS is required in production when REQUIRE_AUTH=true.");
   if (errors.length) {
     console.error("\n=== CONFIGURATION ERRORS ===");
     errors.forEach((e) => console.error(`  ✗ ${e}`));

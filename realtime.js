@@ -16,10 +16,9 @@ const getSseAllowOrigin = (requestOrigin) => {
 const attachRealtime = (server, app, deps) => {
   const {
     REQUIRE_AUTH,
+    authenticateToken,
     authMiddleware,
-    verifyToken,
     getAnonymousUser,
-    getOrCreateUserFromToken,
     getRoomOrCreatePublic,
     isPublicRoomName,
     ensureMembership,
@@ -164,17 +163,10 @@ const attachRealtime = (server, app, deps) => {
 
   const verifyWsConnection = async (req) => {
     const token = extractWsToken(req);
-    if (!token) {
-      if (REQUIRE_AUTH) throw new Error("Authentication required");
-      return getAnonymousUser();
-    }
-    try {
-      const payload = await verifyToken(token);
-      return getOrCreateUserFromToken(payload);
-    } catch (error) {
-      if (REQUIRE_AUTH) throw error;
-      return getAnonymousUser();
-    }
+    return authenticateToken(token, {
+      requireAuth: REQUIRE_AUTH,
+      getAnonymousUserFn: getAnonymousUser
+    });
   };
 
   server.on("upgrade", (req, socket, head) => {
